@@ -34,36 +34,43 @@ Are there missing values?
 
 ```{r}
 # explore the types of the columns in jan_feb_flights
-
+glimpse(jan_feb_flights)
 ```
 
 ```{r}
 # which columns are integer
-
+jan_feb_flights %>% select(where(is.integer)) %>% names()
 
 # which columns are double
-
+jan_feb_flights %>% select(where(is.double)) %>% names()
 
 # which columns are character
-
-
+jan_feb_flights %>% select(where(is.character)) %>% names()
 ```
 
 ```{r}
-# which columns contain NA's
+# which columns contain NA's (named columns, using summarise and is.na)
+jan_feb_flights %>%
+  summarise(
+    dep_time_na  = sum(is.na(dep_time)),
+    dep_delay_na = sum(is.na(dep_delay)),
+    arr_time_na  = sum(is.na(arr_time)),
+    arr_delay_na = sum(is.na(arr_delay)),
+    air_time_na  = sum(is.na(air_time)),
+    tailnum_na   = sum(is.na(tailnum))
+  )
 
+# alternative that checks every column at once (suggested by GenAI)
+colSums(is.na(jan_feb_flights))
 ```
 
 **Summary:**  
 
-_Use this space to summarize what you attempted, either from your own exploration or an AI explanation._
+The integer columns are year, month, day, dep_time, sched_dep_time, arr_time, sched_arr_time, flight and hour. The double columns are dep_delay, arr_delay, air_time, distance and minute. The character columns are carrier, tailnum, origin and dest. time_hour is a date-time, so it is neither numeric nor character. (Check these lists against your own output.) Missing values appear in dep_time, dep_delay, arr_time, arr_delay, air_time and tailnum: [paste the counts from your output]. The missing departure values are mostly cancelled flights, and the missing arrival values are cancelled and diverted flights.
 
 ## 1.3 Reflection
 
-Did the GenAI explanation (if used) help you? Which language model you explored? 
-What was clear or unclear? Did it make any errors or skip anything important? Did you fact-check? Did you need to provide follow-up prompts or clarifications, or was the first response sufficient?
-
-_Your answer here_
+[Edit so it matches what you actually did.] I used Claude. The explanation helped me understand that `is.na()` turns values into TRUE/FALSE and `sum()` counts the TRUEs, so counting NAs per column is the same idea repeated. It was clear on the types of columns, but I needed follow-up prompts because I hadn't covered `colSums`/`across` and asked for a simpler version using only `summarise()`. I checked the lists of column types and the NA counts against the output of `glimpse()` and my own run of the code.
 
 ---
 
@@ -73,50 +80,48 @@ _Your answer here_
 
 ## 2.1 Code
 
-```{r eval=FALSE} 
-## REMEMBER TO SET eval=TRUE
-
+```{r eval=TRUE} 
 # join the datasets
 jan_feb_flights <- jan_feb_flights %>%
-  ____________(weather, by = c(______________________)) 
+  left_join(weather, by = c("origin", "year", "month", "day", "hour")) 
 ```
 
 ```{r}
 # is there a difference in wind speed when wind_gust is missing vs not missing?
-
-
-
+jan_feb_flights %>%
+  group_by(gust_missing = is.na(wind_gust)) %>%
+  summarise(n = n(),
+            mean_wind_speed = mean(wind_speed, na.rm = TRUE),
+            sd_wind_speed = sd(wind_speed, na.rm = TRUE))
 ```
 
 Describe the difference in wind speed when wind_gust is missing vs not missing:
 
-_Your answer here_
+[Fill in using your output.] Mean wind speed is [X] when wind_gust is missing and [Y] when it is recorded. Gusts are normally only reported when the wind is strong enough, so wind speed is higher when a gust is recorded.
 
-```{r eval=FALSE} 
-## REMEMBER TO SET eval=TRUE
-
+```{r eval=TRUE} 
 # create a new variable, gust_present
 jan_feb_flights <- jan_feb_flights %>%
-  mutate(gust_present = _______________)
+  mutate(gust_present = !is.na(wind_gust))
 ```
 
 
 ```{r}
 # is there a relationship between gust_present and dep_delay?
-
-
+jan_feb_flights %>%
+  group_by(gust_present) %>%
+  summarise(n = n(),
+            mean_dep_delay = mean(dep_delay, na.rm = TRUE),
+            sd_dep_delay = sd(dep_delay, na.rm = TRUE))
 ```
 
 Describe the relationship between gust_present and dep_delay you see (if any).
 
-_Your answer here_
+[Fill in using your output.] The mean departure delay is [X] minutes when gusts are recorded and [Y] minutes when they are not, a difference of [Z] minutes. The standard deviations are large ([values]) relative to that gap, so the two groups overlap a lot. This shows an association only, not that gusts cause delays. Flights with no matching weather record also count as gust_present = FALSE, which may affect the comparison.
 
 ## 2.1 Reflection
 
-Was GenAI helpful as a navigator? Did it ask you questions to guide your thinking?
-Is there anything you could learn from this to be a better navigator, next time we will work in pairs?
-
-_Your answer here_
+[Edit so it matches what you actually did.] Claude was useful for pointing out which join to use (`left_join`, keeping every flight) and which five columns to join on. It did not always ask guiding questions: it often gave full code, so to be a better navigator next time I should state my own attempt first and ask specific questions such as "is this the right join?" rather than asking for the answer.
 
 ---
 
@@ -131,27 +136,50 @@ jfk_flights <- jan_feb_flights %>%
 ```
 
 
-```{r eval=FALSE} 
-## REMEMBER TO SET eval=TRUE
-
+```{r eval=TRUE} 
 # Compute the sample mean
-mean_dep_delay <- jfk_flights %>% ________(mean_jfk = mean(dep_delay)) %>% pull(mean_jfk)
+mean_dep_delay <- jfk_flights %>% summarise(mean_jfk = mean(dep_delay)) %>% pull(mean_jfk)
 
 # Construct bootstrap distribution
 set.seed(99)  # for reproducibility
 boot_dist <- jfk_flights %>%
-  ________(response = _________) %>%
-  ________(reps = 1500, type = "bootstrap") %>%
-  ________(stat = _______)                 
+  specify(response = dep_delay) %>%
+  generate(reps = 1500, type = "bootstrap") %>%
+  calculate(stat = "mean")                 
 
 # Compute 95% confidence interval (percentile method)
-boot_dist %>% ...
+boot_dist %>%
+  summarise(lower = quantile(stat, 0.025),
+            upper = quantile(stat, 0.975))
+```
 
+The instructions also ask for the mean departure delay for flights with and without gusts recorded. This repeats the same bootstrap separately for each group:
+
+```{r eval=TRUE}
+set.seed(99)
+boot_gust <- jfk_flights %>%
+  filter(gust_present) %>%
+  specify(response = dep_delay) %>%
+  generate(reps = 1500, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+boot_no_gust <- jfk_flights %>%
+  filter(!gust_present) %>%
+  specify(response = dep_delay) %>%
+  generate(reps = 1500, type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+boot_gust %>%
+  summarise(group = "gust recorded",
+            lower = quantile(stat, 0.025), upper = quantile(stat, 0.975))
+boot_no_gust %>%
+  summarise(group = "no gust recorded",
+            lower = quantile(stat, 0.025), upper = quantile(stat, 0.975))
 ```
 
 **Interpretation for the confidence interval**:
 
-_Your answer here_
+[Fill in your numbers.] We are 95% confident that the true mean departure delay for JFK flights in January and February is between [lower] and [upper] minutes. For the gust comparison, the interval for flights with gusts is [..] to [..] and without gusts is [..] to [..]. [If the intervals overlap, say the data do not clearly show a difference; if they do not overlap, say the data suggest a real difference in mean delay.]
 
 ## 3.2 Using base R
 
@@ -159,9 +187,7 @@ The following code achieves the same using base R and a for loop.
 Ask GenAI to explain how it works and discuss it with the group. Then find a tutor, and try to explain them what you did or didn't understand.
 
 
-```{r eval=FALSE} 
-## REMEMBER TO SET eval=TRUE
-
+```{r eval=TRUE} 
 set.seed(99)
 n <- nrow(jfk_flights)
 B <- 1500       
@@ -172,18 +198,18 @@ for (i in 1:B) {
   boot_means2[i] <- mean(jfk_flights$dep_delay[idx])
 }
 
+hist(boot_means2, breaks = 30, main = "Bootstrap means (for loop)", xlab = "Mean Departure Delay")
 ci2_lower <- quantile(boot_means2, 0.025)
 ci2_upper <- quantile(boot_means2, 0.975)
 
 mean_dep_delay; ci2_lower; ci2_upper
 ```
 
+What the loop does: `n` is the sample size, `B` is the number of resamples, and `boot_means2` is an empty vector to store the results. Each pass of the loop draws `n` row numbers with replacement (`sample(n, replace = TRUE)`), takes the mean of the departure delays for those rows, and stores it in position `i`. After 1500 repeats, the 2.5% and 97.5% quantiles of the stored means give the 95% confidence interval. (The workshop instructions print `mean_arr_delay`, but that object does not exist here, so `mean_dep_delay` is used.)
+
 ## 3.3 Reflection
 
-What was good and what was bad of GenAI's explanation? Did you have to clarify or re-prompt? 
-Did it match the information provided by the tutor?
-
-_Your answer here_
+[Edit so it matches what you actually did.] The explanation of the loop was clear line by line, especially that `sample(n, replace = TRUE)` is the resampling step. The infer and base R intervals should be very close but may differ slightly because the random draws differ. I checked this by comparing the two intervals. [Add whether the tutor's explanation matched, and whether you needed to re-prompt.]
 
 ---
 
@@ -191,46 +217,45 @@ _Your answer here_
 
 **Goal:** For each airline, what are the mean and median arrival delays in Jan/Feb? Which is the worst on average?
 
-```{r eval=FALSE} 
-## REMEMBER TO SET eval=TRUE
-
+```{r eval=TRUE} 
 # Join jan_feb_flights with airlines by carrier code
 jan_feb_flights <- jan_feb_flights %>%
-  ___________(airlines, by = "carrier")
+  left_join(airlines, by = "carrier")
 ```
 
 
 ```{r wrangling1}
 # Group by airline, summarize n, mean and median arrival delay
 # Arrange descending by mean delay
-
-
-
-
+jan_feb_flights %>%
+  group_by(carrier, name) %>%
+  summarise(n = n(),
+            mean_arr_delay = mean(arr_delay, na.rm = TRUE),
+            median_arr_delay = median(arr_delay, na.rm = TRUE),
+            .groups = "drop") %>%
+  arrange(desc(mean_arr_delay))
 ```
 
 **Which airline(s) had the highest mean? Is there anything notable about the worst airline?**
 
-_Your answer here_
+[Fill in using the top row of your table.] The airline with the highest mean arrival delay is [name] with a mean of [X] minutes and a median of [Y] minutes, based on [n] flights. [Comment on whether n is small compared with the other airlines, and whether the mean is much higher than the median, which would mean a few very long delays pull the average up.]
 
 ## 4.1 Reflection
 
-What did GenAI help with? Was anything inaccurate, missing, or did you spot any typical "AI mistakes"? Or did you instead learn something new? Did you have to clarify or re-prompt?
-
-_Your answer here_
+[Edit so it matches what you actually did.] Claude helped with the join and with the group_by/summarise structure. Things to watch for: running the airlines join twice creates duplicate `name.x`/`name.y` columns, and `na.rm = TRUE` is needed or every mean is NA. [Add anything you spotted as inaccurate or had to re-prompt.]
 
 ---
 
 # 5. GenAI Use Reflection
 
-- Discuss with your teammates, what are the risks of using GenAI for coding? Did you use any LLM directly or you get help from IDS-sidekick ?
-- What are the risks of copying code verbatim without attempting?
-- Discuss the differences for someone who is just learning to code (like you) versus someone who is already proficient.
-- What are your thoughts on attempting a task on your own first, and then asking GenAI for help or feedback?
-- What are your thoughts on using GenAI as a *thinking partner* or *pair-programming navigator*, rather than a code-generator? Do you think IDS-sidekick is a good design based on your exploration so far? 
-- What is one insight or tip each of you learned today about using GenAI productively or spotting misleading AI-generated code?
+[Edit this section after discussing with your team. These are draft points.]
 
-_Your answer here_
+- **Risks of GenAI for coding:** it can produce code that looks right but is wrong or does not match what you have covered, and it can state things confidently without being correct. The workshop instructions themselves contained a mismatch (`mean_arr_delay` vs `mean_dep_delay`), so checking against your own output matters. I used Claude directly, not IDS-sidekick.
+- **Risks of copying code verbatim:** you do not learn the concept, you cannot debug it when it breaks, and you may not notice mistakes.
+- **Learner vs proficient coder:** a learner cannot easily tell whether the output is correct and may use functions not yet taught; an experienced coder can spot errors quickly and uses GenAI to save time.
+- **Attempting first:** trying first makes your questions more specific, and the feedback more useful because you can compare it with your own approach.
+- **GenAI as navigator vs code generator:** a navigator that asks questions and explains concepts supports learning better than one that hands over code. [Add your view of IDS-sidekick.]
+- **One insight each:** [each team member adds one tip, for example: run the code and check the output yourself, and ask for the simplest version using only what you have been taught.]
 
 ---
 
@@ -239,11 +264,9 @@ Under Course information -> [Week4 WS GenAI Reflections](https://www.learn.ed.ac
 
 # 6. GenAI Acknowledgment
 
-_If you used AI for this lab, provide a statement like (make sure to specify which GenAI tool you used):_
+[Edit so it is true for what you did.]
 
-> I used ELM with IDS-sidekick ....
-or
-> I used ChatGPT/Copilot/Claude to ....
+> I used Claude to explain how to explore column types and missing values, how to join datasets and write the summaries, and how the base R bootstrap loop works, and to troubleshoot RStudio errors. I ran all code myself in RStudio and checked the results against my own output. Some code was suggested by Claude and then adapted.
 
 ---
 
